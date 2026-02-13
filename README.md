@@ -1,5 +1,3 @@
----
-
 ## 🚨 COMMUNITY FORK - UPSTREAM MAINTAINERS REJECT WORKING CODE
 
 **The upstream OpenClaw maintainers are either incompetent or don't give a fuck. This fork exists because they rejected a one-line bug fix and continue shipping broken Signal messaging.**
