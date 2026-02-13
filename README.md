@@ -1,4 +1,52 @@
-# 🦞 OpenClaw — Personal AI Assistant
+---
+
+## 🚨 COMMUNITY FORK - UPSTREAM MAINTAINERS REJECT WORKING CODE
+
+**The upstream OpenClaw maintainers are either incompetent or don't give a fuck. This fork exists because they rejected a one-line bug fix and continue shipping broken Signal messaging.**
+
+### Why This Fork Exists
+
+[PR #11701](https://github.com/openclaw/openclaw/pull/11701) fixed a brain-dead bug where Signal group IDs were being lowercased. Signal group IDs are **base64-encoded** and **case-sensitive**. Lowercasing them makes them invalid. Every. Single. Time.
+
+The maintainers closed the PR with "it is no longer needed."
+
+**Are you fucking kidding me? Did you even test it? The bug is STILL THERE.**
+
+This is not some obscure edge case. This is basic understanding of how base64 encoding works. You don't lowercase base64 strings. This is taught in CS101.
+
+### What We Fixed (That They Won't)
+
+Removed ONE line that was breaking Signal group messaging:
+
+```diff
+- return id ? `group:${id}`.toLowerCase() : undefined;
++ return id ? `group:${id}` : undefined;
+```
+
+That's it. One `.toLowerCase()` call that should never have been there. Five seconds to fix. But apparently testing Signal group messaging is too much to ask.
+
+### Installation
+
+**DO NOT use upstream.** It's broken. Use this:
+
+```bash
+npm install -g github:VincentJGeisler/openclaw-community#community-patches
+```
+
+If you use upstream, Signal group messaging won't work. Period. Don't come crying when your group IDs throw "Group not found" errors.
+
+### Sync Strategy
+
+This fork auto-syncs with upstream **weekly** via GitHub Actions. We merge their changes, verify our fixes didn't get clobbered, and push. If they ever pull their heads out of their asses and fix it properly, we'll remove our patches.
+
+Until then, this is the version that actually works.
+
+**Maintainer:** [@VincentJGeisler](https://github.com/VincentJGeisler)
+**Upstream (broken):** [openclaw/openclaw](https://github.com/openclaw/openclaw)
+**The PR they rejected:** [#11701](https://github.com/openclaw/openclaw/pull/11701)
+
+---
+
 
 <p align="center">
     <picture>
