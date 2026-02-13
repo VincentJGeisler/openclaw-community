@@ -33,6 +33,87 @@ npm install -g github:VincentJGeisler/openclaw-community#community-patches
 
 If you use upstream, Signal group messaging won't work. Period. Don't come crying when your group IDs throw "Group not found" errors.
 
+---
+
+## 🔓 LAN Access Fix (For Adults Who Understand Their Own Network)
+
+**Problem:** OpenClaw refuses to let you access the web UI from your own LAN without HTTPS. Because apparently the developers think someone's going to man-in-the-middle attack you on your home network between your laptop and your server in the same room.
+
+**Error:** "control ui requires HTTPS or localhost (secure context)"
+
+**Translation:** "We don't trust you to understand basic network security on your own infrastructure."
+
+### The Reality Check
+
+This is security theater. You're running OpenClaw on your home server. You want to access it from your laptop on the same LAN. Nobody gives a shit about HTTPS in this scenario. You're not running a bank. You're not transmitting credit cards. You're chatting with an AI on your own network.
+
+HTTPS exists to prevent:
+1. ISPs snooping on your traffic
+2. Public WiFi attacks
+3. DNS hijacking
+
+None of these apply when you're going from `192.168.1.100` to `192.168.1.200` on your own goddamn network.
+
+### The Fix
+
+Add this to your `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "YOUR_TOKEN_HERE"
+    },
+    "controlUi": {
+      "allowInsecureAuth": true
+    }
+  }
+}
+```
+
+That `allowInsecureAuth: true` is OpenClaw's way of saying "fine, you're an adult, do what you want."
+
+Restart the gateway:
+
+```bash
+systemctl --user restart openclaw-gateway
+```
+
+Now access it from your LAN:
+
+```
+http://YOUR_SERVER_IP:18789/?token=YOUR_TOKEN_HERE
+```
+
+### Why This Isn't Dangerous
+
+1. **You still have token auth** - Random people can't connect
+2. **It's your own network** - If someone's MITMing your LAN, you have bigger problems
+3. **It's behind your firewall** - Not exposed to the internet
+
+The OpenClaw devs included this config option because even they knew the HTTPS requirement was excessive for home networks. They just buried it and made it sound scary ("allowInsecureAuth") so the Hacker News crowd wouldn't yell at them.
+
+### For the "But Security!" Crowd
+
+If you're paranoid about unencrypted traffic on your own LAN:
+- Use an SSH tunnel: `ssh -L 18789:localhost:18789 user@server`
+- Set up Tailscale with MagicDNS (gives you HTTPS)
+- Run nginx with Let's Encrypt certs
+- Move to a cabin in the woods and communicate via smoke signals
+
+But if you're a functioning adult who understands that TLS on localhost-to-localhost traffic is pointless overhead, use the config option above.
+
+---
+
+**Signed,**
+Someone who's been writing code since before the internet was a thing.
+
+---
+
 ### Sync Strategy
 
 This fork auto-syncs with upstream **weekly** via GitHub Actions. We merge their changes, verify our fixes didn't get clobbered, and push. If they ever pull their heads out of their asses and fix it properly, we'll remove our patches.
