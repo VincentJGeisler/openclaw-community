@@ -1,0 +1,154 @@
+name: Sync with Upstream & Verify Patches
+
+on:
+  schedule:
+    # Run every Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout community-patches branch
+        uses: actions/checkout@v4
+        with:
+          ref: community-patches
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "openclaw-community-bot"
+          git config user.email "noreply@github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/openclaw/openclaw.git || true
+          git fetch upstream
+
+      - name: Attempt merge from upstream main
+        id: merge
+        continue-on-error: true
+        run: |
+          git merge upstream/main -m "chore: sync with upstream $(date +%Y-%m-%d)"
+
+      - name: Verify Signal fix is still applied
+        id: verify
+        if: steps.merge.outcome == 'success'
+        run: |
+          # Check that the Signal fix is present in source
+          if grep -q 'return id ? `group:\${id}` : undefined;' src/channels/plugins/normalize/signal.ts; then
+            echo "✅ Signal fix verified"
+            echo "signal_fix_ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Signal fix missing or reverted!"
+            echo "signal_fix_ok=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Push if clean merge and patches verified
+        if: steps.merge.outcome == 'success' && steps.verify.outputs.signal_fix_ok == 'true'
+        run: |
+          git push origin community-patches
+
+      - name: Create issue if merge failed
+        if: steps.merge.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⚠️ Upstream sync failed - ${date}`,
+              body: `**Automated upstream sync encountered merge conflicts.**
+
+              The weekly sync from \`openclaw/openclaw:main\` to \`community-patches\` failed due to merge conflicts.
+
+              ## Manual Action Required
+
+              1. Checkout the community-patches branch:
+                 \`\`\`bash
+                 git checkout community-patches
+                 git pull
+                 \`\`\`
+
+              2. Add upstream and attempt merge:
+                 \`\`\`bash
+                 git remote add upstream https://github.com/openclaw/openclaw.git
+                 git fetch upstream
+                 git merge upstream/main
+                 \`\`\`
+
+              3. Resolve conflicts manually
+
+              4. Verify Signal fix is still present:
+                 \`\`\`bash
+                 grep "return id ? \\\`group:\\\${id}\\\` : undefined;" src/channels/plugins/normalize/signal.ts
+                 \`\`\`
+
+              5. Push the resolved merge:
+                 \`\`\`bash
+                 git push origin community-patches
+                 \`\`\`
+
+              ## Patches to Verify
+
+              - **Signal Group ID Case-Sensitivity**: \`src/channels/plugins/normalize/signal.ts\` line 16
+                - Must NOT have \`.toLowerCase()\` on group ID return
+              `,
+              labels: ['upstream-sync', 'manual-review-needed']
+            });
+
+      - name: Create issue if patch verification failed
+        if: steps.merge.outcome == 'success' && steps.verify.outputs.signal_fix_ok == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 CRITICAL: Patch verification failed - ${date}`,
+              body: `**The Signal case-sensitivity fix is missing after upstream merge!**
+
+              The merge from upstream succeeded, but our critical Signal fix was reverted or lost.
+
+              ## Immediate Action Required
+
+              1. Checkout the community-patches branch:
+                 \`\`\`bash
+                 git checkout community-patches
+                 git pull
+                 \`\`\`
+
+              2. Re-apply the Signal fix to \`src/channels/plugins/normalize/signal.ts\` line 16:
+
+                 **WRONG (what upstream has):**
+                 \`\`\`typescript
+                 return id ? \\\`group:\${id}\\\`.toLowerCase() : undefined;
+                 \`\`\`
+
+                 **CORRECT (what we need):**
+                 \`\`\`typescript
+                 return id ? \\\`group:\${id}\\\` : undefined;
+                 \`\`\`
+
+              3. Commit the fix:
+                 \`\`\`bash
+                 git add src/channels/plugins/normalize/signal.ts
+                 git commit -m "fix: restore Signal group ID case-sensitivity fix (PR #11701)"
+                 git push origin community-patches
+                 \`\`\`
+
+              ## Why This Happened
+
+              Upstream likely modified the same code section, overwriting our fix. This is exactly why this fork exists - they rejected the correct fix and continue shipping broken code.
+              `,
+              labels: ['critical', 'patch-lost', 'manual-fix-needed']
+            });
+
+            // Revert the merge
+            await exec.exec('git', ['reset', '--hard', 'HEAD~1']);
