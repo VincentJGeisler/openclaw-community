@@ -3,6 +3,7 @@ import type { SessionsPatchResult } from "../gateway/protocol/index.js";
 import type { ChatLog } from "./components/chat-log.js";
 import type { GatewayAgentsList, GatewayChatClient } from "./gateway-chat.js";
 import type { TuiOptions, TuiStateAccess } from "./tui-types.js";
+import { stripInboundMetadata } from "../auto-reply/reply/strip-inbound-meta.js";
 import {
   normalizeAgentId,
   normalizeMainKey,
@@ -326,7 +327,7 @@ export function createSessionActions(context: SessionActionContext) {
         if (message.role === "user") {
           const text = extractTextFromMessage(message);
           if (text) {
-            chatLog.addUser(text);
+            chatLog.addUser(stripInboundMetadata(text));
           }
           continue;
         }
