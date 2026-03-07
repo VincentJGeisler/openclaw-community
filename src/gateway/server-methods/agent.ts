@@ -10,8 +10,6 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
-import type { AgentPreResponseHookContext } from "../../hooks/internal-hooks.js";
-import { triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import {
   resolveAgentDeliveryPlan,
@@ -527,38 +525,9 @@ export const agentHandlers: GatewayRequestHandlers = {
 
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
 
-    // Trigger pre-response memory hook
-    const resolvedAgentId = resolveAgentIdFromSessionKey(resolvedSessionKey);
-    const preResponseHookContext: AgentPreResponseHookContext = {
-      message,
-      sessionKey: resolvedSessionKey,
-      sessionId: resolvedSessionId,
-      agentId: resolvedAgentId,
-      additionalContext: [],
-    };
-    const preResponseEvent = {
-      type: "agent" as const,
-      action: "pre-response",
-      sessionKey: resolvedSessionKey,
-      context: preResponseHookContext,
-      timestamp: new Date(),
-      messages: [],
-    };
-
-    await triggerInternalHook(preResponseEvent);
-
-    // Inject memories into message if retrieved
-    let enrichedMessage = message;
-    if (
-      preResponseHookContext.additionalContext &&
-      preResponseHookContext.additionalContext.length > 0
-    ) {
-      enrichedMessage = [...preResponseHookContext.additionalContext, message].join("\n\n");
-    }
-
     void agentCommand(
       {
-        message: enrichedMessage,
+        message,
         images,
         to: resolvedTo,
         sessionId: resolvedSessionId,
