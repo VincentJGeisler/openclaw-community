@@ -87,6 +87,19 @@ export type HookConfig = {
   [key: string]: unknown;
 };
 
+export type PreResponseMemoryHookConfig = HookConfig & {
+  /** Graph RAG endpoint URL with {agentId} placeholder */
+  endpoint?: string;
+  /** Minimum similarity threshold for memory retrieval (0-1) */
+  similarityThreshold?: number;
+  /** Maximum number of memories to retrieve */
+  maxResults?: number;
+  /** Query timeout in milliseconds */
+  timeoutMs?: number;
+  /** How to inject memories: prepend to message or add to system prompt */
+  injectFormat?: "prepend" | "system";
+};
+
 export type HookInstallRecord = {
   source: "npm" | "archive" | "path";
   spec?: string;

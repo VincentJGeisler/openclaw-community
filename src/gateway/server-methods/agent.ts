@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import { BARE_SESSION_RESET_PROMPT } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommand } from "../../commands/agent.js";
@@ -11,6 +10,8 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import type { AgentPreResponseHookContext } from "../../hooks/internal-hooks.js";
+import { triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import {
   resolveAgentDeliveryPlan,
@@ -50,6 +51,7 @@ import { waitForAgentJob } from "./agent-job.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
 import { sessionsHandlers } from "./sessions.js";
+import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
 
@@ -525,9 +527,38 @@ export const agentHandlers: GatewayRequestHandlers = {
 
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
 
+    // Trigger pre-response memory hook
+    const resolvedAgentId = resolveAgentIdFromSessionKey(resolvedSessionKey);
+    const preResponseHookContext: AgentPreResponseHookContext = {
+      message,
+      sessionKey: resolvedSessionKey,
+      sessionId: resolvedSessionId,
+      agentId: resolvedAgentId,
+      additionalContext: [],
+    };
+    const preResponseEvent = {
+      type: "agent" as const,
+      action: "pre-response",
+      sessionKey: resolvedSessionKey,
+      context: preResponseHookContext,
+      timestamp: new Date(),
+      messages: [],
+    };
+
+    await triggerInternalHook(preResponseEvent);
+
+    // Inject memories into message if retrieved
+    let enrichedMessage = message;
+    if (
+      preResponseHookContext.additionalContext &&
+      preResponseHookContext.additionalContext.length > 0
+    ) {
+      enrichedMessage = [...preResponseHookContext.additionalContext, message].join("\n\n");
+    }
+
     void agentCommand(
       {
-        message,
+        message: enrichedMessage,
         images,
         to: resolvedTo,
         sessionId: resolvedSessionId,
