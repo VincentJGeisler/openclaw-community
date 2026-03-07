@@ -101,5 +101,8 @@ export function registerPreResponseMemoryHook(): void {
   log.info("Pre-response memory hook registered");
 }
 
+// Export as default for hook loader
+export default registerPreResponseMemoryHook;
+
 // Auto-register when module is loaded
 registerPreResponseMemoryHook();
