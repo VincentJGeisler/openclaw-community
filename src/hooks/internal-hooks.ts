@@ -26,6 +26,20 @@ export type AgentBootstrapHookEvent = InternalHookEvent & {
   context: AgentBootstrapHookContext;
 };
 
+export type AgentPreResponseHookContext = {
+  message: string;
+  sessionKey: string;
+  sessionId: string;
+  agentId: string;
+  additionalContext?: string[];
+};
+
+export type AgentPreResponseHookEvent = InternalHookEvent & {
+  type: "agent";
+  action: "pre-response";
+  context: AgentPreResponseHookContext;
+};
+
 export type GatewayStartupHookContext = {
   cfg?: OpenClawConfig;
   deps?: CliDeps;

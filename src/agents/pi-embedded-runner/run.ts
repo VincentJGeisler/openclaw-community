@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
-import type { RunEmbeddedPiAgentParams } from "./run/params.js";
-import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+import type { AgentPreResponseHookContext } from "../../hooks/internal-hooks.js";
+import { triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
@@ -52,11 +52,13 @@ import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
+import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import {
   truncateOversizedToolResultsInSession,
   sessionLikelyHasOversizedToolResults,
 } from "./tool-result-truncation.js";
+import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
 import { describeUnknownError } from "./utils.js";
 
 type ApiKeyInfo = ResolvedProviderAuth;
@@ -209,6 +211,40 @@ export async function runEmbeddedPiAgent(
         );
       }
       const prevCwd = process.cwd();
+
+      // Trigger pre-response memory hook
+      const preResponseHookContext: AgentPreResponseHookContext = {
+        message: params.prompt,
+        sessionKey: params.sessionKey ?? "",
+        sessionId: params.sessionId,
+        agentId: workspaceResolution.agentId ?? params.agentId ?? "",
+        additionalContext: [],
+      };
+      const preResponseEvent = {
+        type: "agent" as const,
+        action: "pre-response",
+        sessionKey: params.sessionKey ?? "",
+        context: preResponseHookContext,
+        timestamp: new Date(),
+        messages: [],
+      };
+
+      await triggerInternalHook(preResponseEvent);
+
+      // Inject memories into prompt if retrieved
+      let enrichedPrompt = params.prompt;
+      if (
+        preResponseHookContext.additionalContext &&
+        preResponseHookContext.additionalContext.length > 0
+      ) {
+        enrichedPrompt = [...preResponseHookContext.additionalContext, params.prompt].join("\n\n");
+        log.info(
+          `[pre-response-memory] Memories injected: count=${preResponseHookContext.additionalContext.length} originalLength=${params.prompt.length} enrichedLength=${enrichedPrompt.length}`,
+        );
+      }
+
+      // Use enriched prompt for the rest of the function
+      params = { ...params, prompt: enrichedPrompt };
 
       let provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
       let modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
