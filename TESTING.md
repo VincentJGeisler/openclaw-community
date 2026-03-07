@@ -188,6 +188,21 @@ openclaw gateway logs | grep "Querying Graph RAG"
 openclaw gateway logs | grep "Memories injected"
 ```
 
+## Manual Testing Status
+
+**Hook Loading:** ✅ Verified
+
+- Gateway logs show: "Registered hook: pre-response-memory -> agent:pre-response"
+- Hook system reports 5 handlers loaded (up from 4)
+- Configuration properly loaded from openclaw.json
+
+**Next Steps for Full Testing:**
+
+- Need proper agent invocation method (gateway RPC or message channel)
+- Test with actual Sarah agent receiving messages
+- Verify memory injection in agent context
+- Monitor Graph RAG queries in logs
+
 ## Known Issues
 
 None at this time.
