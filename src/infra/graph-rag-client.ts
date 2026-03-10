@@ -13,6 +13,8 @@ export type GraphRAGMemory = {
   memory_id: string;
   content: string;
   similarity: number;
+  rd_activation?: number;
+  rd_importance?: number;
   metadata?: Record<string, unknown>;
   timestamp?: string;
 };
