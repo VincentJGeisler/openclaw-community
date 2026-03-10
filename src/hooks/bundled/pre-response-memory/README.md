@@ -2,6 +2,12 @@
 
 Automatically queries Graph RAG before agent response generation and injects relevant memories into the message context.
 
+## Features
+
+- **System Time Injection**: Always provides current date/time for temporal awareness
+- **Memory Retrieval**: Queries Graph RAG for relevant context based on incoming message
+- **Uncertainty Detection**: Self-awareness about confidence levels based on memory quality
+
 ## Configuration
 
 Add to `~/.openclaw/openclaw.json`:
@@ -84,6 +90,30 @@ Qualify responses with "I'm not certain, but..." or "Based on limited context...
 ```
 
 This helps the agent self-regulate confidence and avoid sycophantic false certainty.
+
+## System Time Context
+
+The hook automatically injects current system time before every response, providing temporal awareness:
+
+```markdown
+# Current System Time
+
+**Monday, March 10, 2026 at 6:15:23 AM PST**
+
+ISO: 2026-03-10T14:15:23.456Z
+Unix timestamp: 1773085523
+
+---
+```
+
+This allows the agent to:
+
+- Understand relative time references ("yesterday", "last week")
+- Provide time-appropriate responses (morning greetings, time-sensitive info)
+- Track when information was current
+- Schedule and plan based on current date/time
+
+**No configuration needed** - system time is always injected automatically.
 
 ## Options
 

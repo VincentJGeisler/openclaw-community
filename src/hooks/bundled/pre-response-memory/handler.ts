@@ -159,6 +159,42 @@ function formatUncertaintyContext(uncertainty: UncertaintyResult): string {
   return lines.join("\n");
 }
 
+/**
+ * Format current system time as context injection
+ */
+function formatSystemTimeContext(): string {
+  const now = new Date();
+
+  // ISO format with timezone
+  const isoTime = now.toISOString();
+
+  // Human-readable format (e.g., "Monday, March 10, 2026 at 6:15:23 AM PST")
+  const humanTime = now.toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
+
+  const lines = [
+    "# Current System Time",
+    "",
+    `**${humanTime}**`,
+    "",
+    `ISO: ${isoTime}`,
+    `Unix timestamp: ${Math.floor(now.getTime() / 1000)}`,
+    "",
+    "---",
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
 async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void> {
   const config = resolveConfig();
 
@@ -173,6 +209,11 @@ async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void
       sessionKey: event.context.sessionKey,
       messagePreview: event.context.message.slice(0, 100),
     });
+
+    // Inject current system time
+    const timeContext = formatSystemTimeContext();
+    event.context.additionalContext = event.context.additionalContext ?? [];
+    event.context.additionalContext.push(timeContext);
 
     const result = await queryMemories({
       agentId: event.context.agentId,
