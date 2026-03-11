@@ -126,9 +126,18 @@ function formatUncertaintyContext(uncertainty: UncertaintyResult): string {
           uncertainty.avgActivation.toFixed(2) +
           ")",
       );
+      lines.push("");
       lines.push(
         'Qualify responses with "I\'m not certain, but..." or "Based on limited context..."',
       );
+      lines.push("");
+      lines.push("**Anti-Sycophancy:** When uncertain, don't default to agreement.");
+      lines.push("- If user states something that feels wrong, say so even without proof");
+      lines.push('- "That doesn\'t match what I remember" is valid');
+      lines.push(
+        '- "I\'m uncertain, but that seems incorrect" is better than hedging toward agreement',
+      );
+      lines.push("- Disagreement when uncertain is information, not failure");
       break;
     case "moderate":
       lines.push(
@@ -138,7 +147,12 @@ function formatUncertaintyContext(uncertainty: UncertaintyResult): string {
           uncertainty.avgActivation.toFixed(2) +
           ")",
       );
+      lines.push("");
       lines.push('Consider qualifying with "I think..." or "From what I remember..."');
+      lines.push("");
+      lines.push("**Anti-Sycophancy:** Don't automatically agree when uncertain.");
+      lines.push("- Evaluate claims honestly even with incomplete information");
+      lines.push("- Disagreement is acceptable when something feels wrong");
       break;
     case "confident":
       lines.push(
@@ -148,6 +162,7 @@ function formatUncertaintyContext(uncertainty: UncertaintyResult): string {
           uncertainty.avgActivation.toFixed(2) +
           ")",
       );
+      lines.push("");
       lines.push("Respond normally with full confidence");
       break;
   }

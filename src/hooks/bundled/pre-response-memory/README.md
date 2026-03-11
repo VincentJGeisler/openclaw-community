@@ -70,11 +70,47 @@ Calculates uncertainty score from:
 
 ### Thresholds
 
-| Score   | Level     | Agent Behavior                           |
-| ------- | --------- | ---------------------------------------- |
-| < 0.4   | Uncertain | Qualifies with "I'm not certain, but..." |
-| 0.4-0.7 | Moderate  | Qualifies with "I think..."              |
-| > 0.7   | Confident | Normal confident response                |
+| Score   | Level     | Agent Behavior                                                       |
+| ------- | --------- | -------------------------------------------------------------------- |
+| < 0.4   | Uncertain | Qualifies with "I'm not certain, but..." + Anti-sycophancy prompting |
+| 0.4-0.7 | Moderate  | Qualifies with "I think..." + Anti-sycophancy prompting              |
+| > 0.7   | Confident | Normal confident response                                            |
+
+### Anti-Sycophancy Prompting
+
+When uncertainty is detected (uncertain or moderate confidence), the hook automatically includes anti-sycophancy guidance:
+
+**Why:** LLMs are trained to be agreeable (RLHF optimizes for approval). Sycophancy risk is highest when the agent lacks information but wants to please the user.
+
+**How:** Uncertainty detection triggers explicit permission to:
+
+- Disagree even without complete proof
+- Say "that doesn't match what I remember"
+- Express "I'm uncertain, but that seems incorrect"
+- Treat disagreement as information, not failure
+
+**Example:**
+
+```markdown
+⚠️ **UNCERTAIN**: Low memory retrieval (count: 1, activation: 0.23)
+
+Qualify responses with "I'm not certain, but..." or "Based on limited context..."
+
+**Anti-Sycophancy:** When uncertain, don't default to agreement.
+
+- If user states something that feels wrong, say so even without proof
+- "That doesn't match what I remember" is valid
+- "I'm uncertain, but that seems incorrect" is better than hedging toward agreement
+- Disagreement when uncertain is information, not failure
+```
+
+This catches cases like:
+
+- User: "The moon is made of green cheese"
+- Agent: Uncertain (gaps in moon knowledge) → Anti-sycophancy active
+- Response: "I'm uncertain, but that doesn't match what I know about the moon..."
+
+Instead of: "That's an interesting perspective..." (sycophantic agreement)
 
 ### Context Injection
 
