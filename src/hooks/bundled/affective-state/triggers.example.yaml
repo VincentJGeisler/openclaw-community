@@ -1,0 +1,16 @@
+# Affective state triggers (example)
+#
+# Copy to triggers.yaml and customize.
+#
+# pattern: regex pattern (case-insensitive)
+# intensity: 0.0 - 1.0
+
+triggers:
+  - pattern: '\bgood\s+bot\b'
+    intensity: 0.6
+
+  - pattern: '\bthank\s+you\b'
+    intensity: 0.3
+
+  - pattern: '\byou\s+are\s+(great|awesome|amazing)\b'
+    intensity: 0.7
