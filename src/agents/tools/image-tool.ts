@@ -1,9 +1,7 @@
+import path from "node:path";
 import { type Api, type Context, complete, type Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { SandboxFsBridge } from "../sandbox/fs-bridge.js";
-import type { AnyAgentTool } from "./common.js";
 import { resolveUserPath } from "../../utils.js";
 import { getDefaultLocalRoots, loadWebMedia } from "../../web/media.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "../auth-profiles.js";
@@ -14,7 +12,9 @@ import { runWithImageModelFallback } from "../model-fallback.js";
 import { resolveConfiguredModelRef } from "../model-selection.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import { discoverAuthStorage, discoverModels } from "../pi-model-discovery.js";
+import type { SandboxFsBridge } from "../sandbox/fs-bridge.js";
 import { normalizeWorkspaceDir } from "../workspace-dir.js";
+import type { AnyAgentTool } from "./common.js";
 import {
   coerceImageAssistantText,
   coerceImageModelConfig,
@@ -92,6 +92,10 @@ export function resolveImageModelConfigForTool(params: {
   }
 
   const primary = resolveDefaultModelRef(params.cfg);
+  const openrouterOk = hasAuthForProvider({
+    provider: "openrouter",
+    agentDir: params.agentDir,
+  });
   const openaiOk = hasAuthForProvider({
     provider: "openai",
     agentDir: params.agentDir,
@@ -124,8 +128,10 @@ export function resolveImageModelConfigForTool(params: {
 
   let preferred: string | null = null;
 
-  // MiniMax users: always try the canonical vision model first when auth exists.
-  if (primary.provider === "minimax" && providerOk) {
+  // OpenRouter users: use cheap gemini-flash-2.0 for vision
+  if (primary.provider === "openrouter" && openrouterOk) {
+    preferred = "openrouter/google/gemini-2.0-flash-001";
+  } else if (primary.provider === "minimax" && providerOk) {
     preferred = "minimax/MiniMax-VL-01";
   } else if (providerOk && providerVisionFromConfig) {
     preferred = providerVisionFromConfig;
@@ -138,6 +144,9 @@ export function resolveImageModelConfigForTool(params: {
   }
 
   if (preferred?.trim()) {
+    if (openrouterOk) {
+      addFallback("openrouter/google/gemini-2.0-flash-001");
+    }
     if (openaiOk) {
       addFallback("openai/gpt-5-mini");
     }
@@ -153,6 +162,18 @@ export function resolveImageModelConfigForTool(params: {
   }
 
   // Cross-provider fallback when we can't pair with the primary provider.
+  if (openrouterOk) {
+    if (openaiOk) {
+      addFallback("openai/gpt-5-mini");
+    }
+    if (anthropicOk) {
+      addFallback(ANTHROPIC_IMAGE_FALLBACK);
+    }
+    return {
+      primary: "openrouter/google/gemini-2.0-flash-001",
+      ...(fallbacks.length ? { fallbacks } : {}),
+    };
+  }
   if (openaiOk) {
     if (anthropicOk) {
       addFallback(ANTHROPIC_IMAGE_FALLBACK);
