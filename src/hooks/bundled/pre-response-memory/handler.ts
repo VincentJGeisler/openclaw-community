@@ -5,6 +5,8 @@
  * and injects relevant memories into the message context.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { loadConfig } from "../../../config/config.js";
 import type { PreResponseMemoryHookConfig } from "../../../config/types.hooks.js";
 import {
@@ -19,10 +21,11 @@ import { registerInternalHook } from "../../internal-hooks.js";
 const log = createSubsystemLogger("hooks/pre-response-memory");
 
 const DEFAULT_ENDPOINT = "http://10.3.1.41:8080/agent/{agentId}";
-const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
-const DEFAULT_MAX_RESULTS = 5;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.5;
+const DEFAULT_MAX_RESULTS = 10;
 const DEFAULT_TIMEOUT_MS = 500;
 const DEFAULT_INJECT_FORMAT = "prepend";
+const DEFAULT_CONTEXT_MESSAGES = 5;
 
 // Uncertainty detection defaults
 const DEFAULT_UNCERTAIN_THRESHOLD = 0.4;
@@ -175,6 +178,86 @@ function formatUncertaintyContext(uncertainty: UncertaintyResult): string {
 }
 
 /**
+ * Read last N messages from session for building query context
+ */
+async function readRecentMessages(params: {
+  agentId: string;
+  sessionKey: string;
+  limit: number;
+}): Promise<string[]> {
+  try {
+    const storePath =
+      process.env.OPENCLAW_SESSION_STORE ??
+      path.join(process.env.HOME ?? "/root", ".openclaw", "agents");
+
+    const sessionFile = path.join(
+      storePath,
+      params.agentId,
+      "sessions",
+      `${params.sessionKey}.jsonl`,
+    );
+
+    if (!fs.existsSync(sessionFile)) {
+      return [];
+    }
+
+    const content = await fs.promises.readFile(sessionFile, "utf-8");
+    const lines = content.trim().split("\n");
+    const messages: string[] = [];
+
+    // Read last N message entries (user + assistant)
+    for (let i = lines.length - 1; i >= 0 && messages.length < params.limit * 2; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+
+        if (entry.type === "message" && entry.message?.role) {
+          const role = entry.message.role;
+
+          // Extract text content from user and assistant messages
+          if (role === "user" || role === "assistant") {
+            const content = entry.message.content;
+
+            if (Array.isArray(content)) {
+              for (const item of content) {
+                if (item.type === "text" && item.text) {
+                  messages.unshift(`${role}: ${item.text}`);
+                  break;
+                }
+              }
+            } else if (typeof content === "string") {
+              messages.unshift(`${role}: ${content}`);
+            }
+          }
+        }
+      } catch {
+        // Skip malformed lines
+        continue;
+      }
+    }
+
+    return messages.slice(-params.limit);
+  } catch (err) {
+    log.warn("Failed to read recent messages", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/**
+ * Build query string from current message and recent context
+ */
+function buildQueryContext(currentMessage: string, recentMessages: string[]): string {
+  if (recentMessages.length === 0) {
+    return currentMessage;
+  }
+
+  // Combine recent messages with current for better context
+  const context = [...recentMessages, currentMessage].join("\n");
+  return context;
+}
+
+/**
  * Format current system time as context injection
  */
 function formatSystemTimeContext(): string {
@@ -230,9 +313,25 @@ async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void
     event.context.additionalContext = event.context.additionalContext ?? [];
     event.context.additionalContext.push(timeContext);
 
+    // Read recent messages for better query context
+    const recentMessages = await readRecentMessages({
+      agentId: event.context.agentId,
+      sessionKey: event.context.sessionKey,
+      limit: DEFAULT_CONTEXT_MESSAGES,
+    });
+
+    // Build query with conversation context
+    const queryString = buildQueryContext(event.context.message, recentMessages);
+
+    log.debug("Built query context", {
+      currentMessageLength: event.context.message.length,
+      recentMessagesCount: recentMessages.length,
+      queryLength: queryString.length,
+    });
+
     const result = await queryMemories({
       agentId: event.context.agentId,
-      query: event.context.message,
+      query: queryString,
       endpoint: config.endpoint!,
       similarityThreshold: config.similarityThreshold!,
       maxResults: config.maxResults!,
