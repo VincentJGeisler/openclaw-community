@@ -1,9 +1,4 @@
 import fs from "node:fs";
-import type { SkillCommandSpec } from "../agents/skills.js";
-import type { OpenClawConfig } from "../config/config.js";
-import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
-import type { CommandCategory } from "./commands-registry.types.js";
-import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "./thinking.js";
 import { lookupContextTokens } from "../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveModelAuthMode } from "../agents/model-auth.js";
@@ -13,8 +8,10 @@ import {
   resolveModelRefFromString,
 } from "../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
+import type { SkillCommandSpec } from "../agents/skills.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../agents/usage.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";
+import type { OpenClawConfig } from "../config/config.js";
 import {
   resolveMainSessionKey,
   resolveSessionFilePath,
@@ -23,7 +20,7 @@ import {
   type SessionScope,
 } from "../config/sessions.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
-import { resolveCommitHash } from "../infra/git-commit.js";
+import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
 import { listPluginCommands } from "../plugins/commands.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import {
@@ -40,14 +37,15 @@ import {
   formatUsd,
   resolveModelCostConfig,
 } from "../utils/usage-format.js";
-import { VERSION } from "../version.js";
 import {
   listChatCommands,
   listChatCommandsForConfig,
   type ChatCommandDefinition,
 } from "./commands-registry.js";
+import type { CommandCategory } from "./commands-registry.types.js";
 import { resolveActiveFallbackState } from "./fallback-state.js";
 import { formatProviderModelRef, resolveSelectedAndActiveModel } from "./model-runtime.js";
+import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "./thinking.js";
 
 type AgentDefaults = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>;
 type AgentConfig = Partial<AgentDefaults> & {
@@ -583,8 +581,7 @@ export function buildStatusMessage(args: StatusArgs): string {
         showFallbackAuth ? ` · 🔑 ${activeAuthLabelValue}` : ""
       } (${fallbackState.reason ?? "selected model unavailable"})`
     : null;
-  const commit = resolveCommitHash();
-  const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
+  const versionLine = `Hyperagentic platform v1.0.1`;
   const usagePair = formatUsagePair(inputTokens, outputTokens);
   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
