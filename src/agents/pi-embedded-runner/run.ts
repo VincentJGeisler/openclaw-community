@@ -232,6 +232,7 @@ export async function runEmbeddedPiAgent(
       await triggerInternalHook(preResponseEvent);
 
       // Inject memories into prompt if retrieved
+      // NOTE: enrichedPrompt is used ONLY for the LLM API call, not persisted to session
       let enrichedPrompt = params.prompt;
       if (
         preResponseHookContext.additionalContext &&
@@ -242,9 +243,6 @@ export async function runEmbeddedPiAgent(
           `[pre-response-memory] Memories injected: count=${preResponseHookContext.additionalContext.length} originalLength=${params.prompt.length} enrichedLength=${enrichedPrompt.length}`,
         );
       }
-
-      // Use enriched prompt for the rest of the function
-      params = { ...params, prompt: enrichedPrompt };
 
       let provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
       let modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -522,7 +520,7 @@ export async function runEmbeddedPiAgent(
           await fs.mkdir(resolvedWorkspace, { recursive: true });
 
           const prompt =
-            provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
+            provider === "anthropic" ? scrubAnthropicRefusalMagic(enrichedPrompt) : enrichedPrompt;
 
           const attempt = await runEmbeddedAttempt({
             sessionId: params.sessionId,
