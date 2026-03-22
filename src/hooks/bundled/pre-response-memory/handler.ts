@@ -201,8 +201,33 @@ async function readRecentMessages(params: {
       return [];
     }
 
-    const content = await fs.promises.readFile(sessionFile, "utf-8");
-    const lines = content.trim().split("\n");
+    // Read only the tail of the file instead of loading the entire session.
+    // For a 7.5MB session with 3600 lines, reading the whole file is a massive
+    // bottleneck. We only need the last ~50 lines to find 5 recent messages.
+    const TAIL_BYTES = 64 * 1024; // 64KB tail should contain plenty of recent messages
+    const stat = await fs.promises.stat(sessionFile);
+    const fileSize = stat.size;
+
+    let tailContent: string;
+    if (fileSize <= TAIL_BYTES) {
+      tailContent = await fs.promises.readFile(sessionFile, "utf-8");
+    } else {
+      const fd = await fs.promises.open(sessionFile, "r");
+      try {
+        const buffer = Buffer.alloc(TAIL_BYTES);
+        await fd.read(buffer, 0, TAIL_BYTES, fileSize - TAIL_BYTES);
+        tailContent = buffer.toString("utf-8");
+        // Drop first partial line (we likely started mid-line)
+        const firstNewline = tailContent.indexOf("\n");
+        if (firstNewline >= 0) {
+          tailContent = tailContent.slice(firstNewline + 1);
+        }
+      } finally {
+        await fd.close();
+      }
+    }
+
+    const lines = tailContent.trim().split("\n");
     const messages: string[] = [];
 
     // Read last N message entries (user + assistant)
