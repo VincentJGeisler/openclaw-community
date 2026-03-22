@@ -49,7 +49,14 @@ export function loadAllSkillJsonTools(params: {
 }): LoadedSkillJsonTool[] {
   const skillsDir = path.join(params.workspaceDir, "skills");
 
+  logger.debug("Loading skill.json tools", {
+    workspaceDir: params.workspaceDir,
+    skillsDir,
+    agentId: params.agentId,
+  });
+
   if (!fs.existsSync(skillsDir)) {
+    logger.debug("Skills directory does not exist", { skillsDir });
     return [];
   }
 
@@ -57,6 +64,10 @@ export function loadAllSkillJsonTools(params: {
 
   try {
     const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+    logger.debug("Scanning skills directory", {
+      skillsDir,
+      entryCount: entries.length,
+    });
 
     for (const entry of entries) {
       if (!entry.isDirectory()) {
@@ -66,9 +77,18 @@ export function loadAllSkillJsonTools(params: {
       const skillDir = path.join(skillsDir, entry.name);
       const skillJson = loadSkillJson(skillDir);
 
-      if (!skillJson || !skillJson.tools || skillJson.tools.length === 0) {
+      if (!skillJson) {
         continue;
       }
+
+      if (!skillJson.tools || skillJson.tools.length === 0) {
+        continue;
+      }
+
+      logger.debug("Found skill.json with tools", {
+        skillName: skillJson.name,
+        toolCount: skillJson.tools.length,
+      });
 
       for (const tool of skillJson.tools) {
         if (tool.type !== "exec") {
@@ -79,6 +99,28 @@ export function loadAllSkillJsonTools(params: {
           });
           continue;
         }
+
+        // Validate tool definition
+        if (!tool.name || typeof tool.name !== "string" || tool.name.trim() === "") {
+          logger.warn("skill.json tool missing or invalid name", {
+            skill: skillJson.name,
+          });
+          continue;
+        }
+
+        if (!tool.command || typeof tool.command !== "string" || tool.command.trim() === "") {
+          logger.warn("skill.json tool missing or invalid command", {
+            skill: skillJson.name,
+            toolName: tool.name,
+          });
+          continue;
+        }
+
+        logger.debug("Registering skill.json tool", {
+          skillName: skillJson.name,
+          toolName: tool.name,
+          command: tool.command,
+        });
 
         tools.push({
           skillName: skillJson.name,
@@ -91,6 +133,13 @@ export function loadAllSkillJsonTools(params: {
     logger.error("Failed to load skill.json tools", {
       skillsDir,
       error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  if (tools.length > 0) {
+    logger.info("Loaded skill.json tools", {
+      toolCount: tools.length,
+      tools: tools.map((t) => t.tool.name),
     });
   }
 

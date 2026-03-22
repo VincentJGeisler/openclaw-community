@@ -8,6 +8,11 @@ import type { LoadedSkillJsonTool } from "./skill-json-loader.js";
 
 const logger = createSubsystemLogger("skills:json:exec");
 
+// Maximum output size to prevent OOM (10MB)
+const MAX_OUTPUT_SIZE = 10 * 1024 * 1024;
+// Default timeout for exec tools (5 minutes)
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+
 /**
  * Execute a skill.json exec tool
  */
@@ -32,6 +37,15 @@ async function executeSkillJsonTool(params: {
   });
 
   return new Promise<AgentToolResult<unknown>>((resolve) => {
+    let resolved = false;
+    const safeResolve = (result: AgentToolResult<unknown>) => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      resolve(result);
+    };
+
     const proc = spawn(command, resolvedArgs, {
       cwd: skillDir,
       env: { ...process.env },
@@ -40,35 +54,70 @@ async function executeSkillJsonTool(params: {
 
     let stdout = "";
     let stderr = "";
+    let outputTruncated = false;
+
+    // Timeout handler
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        proc.kill("SIGTERM");
+        safeResolve(
+          jsonResult({
+            error: `Tool execution timeout after ${DEFAULT_TIMEOUT_MS}ms`,
+            toolName,
+          }),
+        );
+      }
+    }, DEFAULT_TIMEOUT_MS);
+
+    // Cleanup function
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      if (signal && abortHandler) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+    };
 
     proc.stdout.on("data", (chunk) => {
+      if (stdout.length + chunk.length > MAX_OUTPUT_SIZE) {
+        outputTruncated = true;
+        proc.kill("SIGTERM");
+        return;
+      }
       stdout += chunk.toString();
     });
 
     proc.stderr.on("data", (chunk) => {
+      if (stderr.length + chunk.length > MAX_OUTPUT_SIZE) {
+        stderr += "[truncated]";
+        return;
+      }
       stderr += chunk.toString();
     });
 
     // Handle abort signal
+    let abortHandler: (() => void) | null = null;
     if (signal) {
-      signal.addEventListener("abort", () => {
+      abortHandler = () => {
         proc.kill("SIGTERM");
-        resolve(
+        cleanup();
+        safeResolve(
           jsonResult({
             error: "Tool execution aborted",
             toolName,
           }),
         );
-      });
+      };
+      signal.addEventListener("abort", abortHandler);
     }
 
     proc.on("error", (err) => {
+      cleanup();
       logger.error("skill.json tool execution failed", {
         toolName,
         command,
         error: err.message,
       });
-      resolve(
+      safeResolve(
         jsonResult({
           error: `Execution failed: ${err.message}`,
           toolName,
@@ -77,13 +126,25 @@ async function executeSkillJsonTool(params: {
     });
 
     proc.on("close", (code) => {
+      cleanup();
+
+      if (outputTruncated) {
+        safeResolve(
+          jsonResult({
+            error: `Tool output exceeded ${MAX_OUTPUT_SIZE} bytes`,
+            toolName,
+          }),
+        );
+        return;
+      }
+
       if (code !== 0) {
         logger.warn("skill.json tool exited with non-zero code", {
           toolName,
           code,
           stderr: stderr.slice(0, 500),
         });
-        resolve(
+        safeResolve(
           jsonResult({
             error: `Command exited with code ${code}`,
             stderr: stderr.trim() || undefined,
@@ -96,14 +157,14 @@ async function executeSkillJsonTool(params: {
       // Parse stdout as JSON
       try {
         const result = JSON.parse(stdout);
-        resolve(jsonResult(result));
+        safeResolve(jsonResult(result));
       } catch (err) {
         logger.error("Failed to parse skill.json tool output", {
           toolName,
           error: err instanceof Error ? err.message : String(err),
           stdout: stdout.slice(0, 500),
         });
-        resolve(
+        safeResolve(
           jsonResult({
             error: "Failed to parse tool output as JSON",
             raw: stdout.slice(0, 1000),
@@ -119,12 +180,13 @@ async function executeSkillJsonTool(params: {
         proc.stdin.write(JSON.stringify(toolInput));
         proc.stdin.end();
       } catch (err) {
+        cleanup();
         logger.error("Failed to write input to skill.json tool", {
           toolName,
           error: err instanceof Error ? err.message : String(err),
         });
         proc.kill();
-        resolve(
+        safeResolve(
           jsonResult({
             error: "Failed to write input to tool",
             toolName,
