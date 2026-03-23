@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { estimateTokens, SessionManager } from "@mariozechner/pi-coding-agent";
 import { loadConfig } from "../../../config/config.js";
 import type { PreResponseMemoryHookConfig } from "../../../config/types.hooks.js";
 import {
@@ -21,12 +22,11 @@ import { registerInternalHook } from "../../internal-hooks.js";
 const log = createSubsystemLogger("hooks/pre-response-memory");
 
 const DEFAULT_ENDPOINT = "http://10.3.1.41:8080/agent/{agentId}";
-const DEFAULT_SIMILARITY_THRESHOLD = 0.5;
-const DEFAULT_MAX_RESULTS = 10;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
+const DEFAULT_MAX_RESULTS = 5;
 const DEFAULT_TIMEOUT_MS = 500;
 const DEFAULT_INJECT_FORMAT = "prepend";
-const DEFAULT_CONTEXT_MESSAGES = 5;
-
+const DEFAULT_CONTEXT_MESSAGES = 2;
 // Uncertainty detection defaults
 const DEFAULT_UNCERTAIN_THRESHOLD = 0.4;
 const DEFAULT_CONFIDENT_THRESHOLD = 0.7;
@@ -318,6 +318,94 @@ function formatSystemTimeContext(): string {
   return lines.join("\n");
 }
 
+/**
+ * Estimate tokens in session file
+ */
+async function estimateSessionTokens(sessionFile: string): Promise<number | null> {
+  try {
+    const sessionManager = SessionManager.open(sessionFile);
+    const sessionContext = sessionManager.buildSessionContext();
+    let totalTokens = 0;
+
+    for (const msg of sessionContext.messages) {
+      try {
+        totalTokens += estimateTokens(msg);
+      } catch {
+        // Skip messages that fail to estimate
+      }
+    }
+
+    return totalTokens;
+  } catch (err) {
+    log.warn("Failed to estimate session tokens", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Get session file path from sessionKey
+ */
+function resolveSessionFilePath(params: { agentId: string; sessionKey: string }): string {
+  const storePath =
+    process.env.OPENCLAW_SESSION_STORE ??
+    path.join(process.env.HOME ?? "/root", ".openclaw", "agents");
+
+  // Parse sessionKey format: agent:agentId:channel:sessionId or similar
+  // Extract session ID from the end
+  const parts = params.sessionKey.split(":");
+  const sessionId = parts[parts.length - 1];
+
+  return path.join(storePath, params.agentId, "sessions", `${sessionId}.jsonl`);
+}
+
+/**
+ * Get context window size for agent
+ */
+function getContextWindowSize(_agentId: string): number {
+  // Default to 200k (common for Claude Opus/Sonnet)
+  // TODO: Read from agent-specific config when available
+  return 200000;
+}
+
+/**
+ * Format context window warning as context injection
+ */
+function formatContextWarningContext(params: {
+  currentTokens: number;
+  contextWindow: number;
+  percentUsed: number;
+  hardThreshold: number;
+}): string {
+  const { currentTokens, contextWindow, percentUsed, hardThreshold } = params;
+
+  const percentDisplay = (percentUsed * 100).toFixed(0);
+  const hardThresholdDisplay = (hardThreshold * 100).toFixed(0);
+  const tokensRemaining = Math.floor(contextWindow * hardThreshold) - currentTokens;
+
+  const lines = [
+    "# ⚠️ Context Window Warning",
+    "",
+    `You are approaching the context limit (**${percentDisplay}% used**, ${(currentTokens / 1000).toFixed(1)}k/${(contextWindow / 1000).toFixed(0)}k tokens).`,
+    "",
+    "**Action recommended**: Save important context to long-term memory before automatic compaction:",
+    "- Use memory `store` tool to save key decisions, insights, or patterns",
+    "- Prioritize information you'll need to remember after context resets",
+    "- Focus on non-obvious context (obvious facts don't need saving)",
+    "",
+    `Automatic compaction will trigger at ${hardThresholdDisplay}% (~${(tokensRemaining / 1000).toFixed(1)}k tokens remaining).`,
+    "",
+    "**Note**: If you recently saved context, you don't need to re-save the same information.",
+    "Check existing memories with `search` if uncertain about duplicates.",
+    "",
+    "---",
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
 async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void> {
   const config = resolveConfig();
 
@@ -338,6 +426,57 @@ async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void
     event.context.additionalContext = event.context.additionalContext ?? [];
     event.context.additionalContext.push(timeContext);
 
+    // Check context usage and inject warning if approaching limit
+    const cfg = loadConfig();
+    const compactionMode = cfg?.agents?.defaults?.compaction?.mode;
+    const warningThreshold = cfg?.agents?.defaults?.compaction?.warningThreshold ?? 0.7;
+    const hardThreshold = cfg?.agents?.defaults?.compaction?.hardLimitThreshold ?? 0.85;
+
+    if (compactionMode === "hard-limit" && warningThreshold < hardThreshold) {
+      try {
+        const sessionFile = resolveSessionFilePath({
+          agentId: event.context.agentId,
+          sessionKey: event.context.sessionKey,
+        });
+
+        const currentTokens = await estimateSessionTokens(sessionFile);
+        if (currentTokens !== null) {
+          const contextWindow = getContextWindowSize(event.context.agentId);
+          const percentUsed = currentTokens / contextWindow;
+
+          log.debug("Context usage check", {
+            currentTokens,
+            contextWindow,
+            percentUsed: (percentUsed * 100).toFixed(1) + "%",
+            warningThreshold: (warningThreshold * 100).toFixed(0) + "%",
+            hardThreshold: (hardThreshold * 100).toFixed(0) + "%",
+          });
+
+          // Inject warning if in warning zone (between warning and hard threshold)
+          if (percentUsed >= warningThreshold && percentUsed < hardThreshold) {
+            const warningContext = formatContextWarningContext({
+              currentTokens,
+              contextWindow,
+              percentUsed,
+              hardThreshold,
+            });
+            event.context.additionalContext.push(warningContext);
+
+            log.info("Context warning reminder injected", {
+              percentUsed: (percentUsed * 100).toFixed(1) + "%",
+              currentTokens,
+              warningThreshold: (warningThreshold * 100).toFixed(0) + "%",
+            });
+          }
+        }
+      } catch (err) {
+        log.warn("Context warning check failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Don't throw - proceed with memory retrieval even if warning check fails
+      }
+    }
+
     // Read recent messages for better query context
     const recentMessages = await readRecentMessages({
       agentId: event.context.agentId,
@@ -354,14 +493,96 @@ async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void
       queryLength: queryString.length,
     });
 
-    const result = await queryMemories({
+    // Dynamic RD weighting strategy:
+    // 1. Start with semantic-only query (exploration - cast wide net)
+    // 2. Assess uncertainty from results
+    // 3. If moderate/confident, re-query with RD weighting (exploitation)
+    // 4. Use appropriate results based on confidence level
+
+    let result: Awaited<ReturnType<typeof queryMemories>>;
+    let finalUseRdWeighting = false;
+    let finalAlpha = 1.0;
+    let finalBeta = 0.0;
+
+    // Phase 1: Semantic exploration query
+    const semanticResult = await queryMemories({
       agentId: event.context.agentId,
       query: queryString,
       endpoint: config.endpoint!,
       similarityThreshold: config.similarityThreshold!,
       maxResults: config.maxResults!,
       timeoutMs: config.timeoutMs!,
+      useRdWeighting: false, // Pure semantic
     });
+
+    if (!semanticResult.success || semanticResult.memories.length === 0) {
+      // No memories found, use semantic results
+      result = semanticResult;
+      log.debug("Dynamic weighting: using semantic results (no memories found)");
+    } else if (config.uncertaintyDetection?.enabled) {
+      // Phase 2: Assess uncertainty from semantic results
+      const uncertainty = calculateUncertainty(
+        semanticResult.memories,
+        config.uncertaintyDetection,
+      );
+
+      log.debug("Dynamic weighting: uncertainty assessed", {
+        level: uncertainty.level,
+        score: uncertainty.score.toFixed(3),
+        memoryCount: uncertainty.memoryCount,
+      });
+
+      if (uncertainty.level === "uncertain") {
+        // Low confidence - stick with semantic (exploration)
+        result = semanticResult;
+        finalAlpha = 1.0;
+        finalBeta = 0.0;
+        log.debug("Dynamic weighting: using semantic results (uncertain - exploration mode)");
+      } else {
+        // Moderate or confident - use RD weighting (exploitation)
+        finalUseRdWeighting = true;
+
+        if (uncertainty.level === "moderate") {
+          // Balanced weighting
+          finalAlpha = 0.7;
+          finalBeta = 0.3;
+        } else {
+          // Confident - trust importance more
+          finalAlpha = 0.6;
+          finalBeta = 0.4;
+        }
+
+        // Phase 3: RD-weighted query for exploitation
+        const rdResult = await queryMemories({
+          agentId: event.context.agentId,
+          query: queryString,
+          endpoint: config.endpoint!,
+          similarityThreshold: config.similarityThreshold!,
+          maxResults: config.maxResults!,
+          timeoutMs: config.timeoutMs!,
+          useRdWeighting: true,
+          alpha: finalAlpha,
+          beta: finalBeta,
+        });
+
+        if (rdResult.success && rdResult.memories.length > 0) {
+          result = rdResult;
+          log.info("Dynamic weighting: using RD-weighted results", {
+            level: uncertainty.level,
+            alpha: finalAlpha,
+            beta: finalBeta,
+          });
+        } else {
+          // Fallback to semantic if RD query fails
+          result = semanticResult;
+          log.warn("Dynamic weighting: RD query failed, using semantic results");
+        }
+      }
+    } else {
+      // Uncertainty detection disabled - use semantic results
+      result = semanticResult;
+      log.debug("Dynamic weighting: using semantic results (uncertainty detection disabled)");
+    }
 
     if (!result.success) {
       log.warn("Memory query failed, proceeding without context", {
@@ -411,6 +632,9 @@ async function handlePreResponse(event: AgentPreResponseHookEvent): Promise<void
       count: result.memories.length,
       contextLength: contextString.length,
       topSimilarity: result.memories[0]?.similarity,
+      rdWeighted: finalUseRdWeighting,
+      alpha: finalUseRdWeighting ? finalAlpha : undefined,
+      beta: finalUseRdWeighting ? finalBeta : undefined,
     });
   } catch (err) {
     log.error("Pre-response hook error", {

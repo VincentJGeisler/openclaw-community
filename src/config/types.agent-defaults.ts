@@ -284,7 +284,7 @@ export type AgentDefaultsConfig = {
   };
 };
 
-export type AgentCompactionMode = "default" | "safeguard";
+export type AgentCompactionMode = "default" | "safeguard" | "hard-limit";
 
 export type AgentCompactionConfig = {
   /** Compaction summarization mode. */
@@ -297,6 +297,10 @@ export type AgentCompactionConfig = {
   reserveTokensFloor?: number;
   /** Max share of context window for history during safeguard pruning (0.1–0.9, default 0.5). */
   maxHistoryShare?: number;
+  /** Threshold percentage for hard-limit mode (0.0–1.0, default 0.85). */
+  hardLimitThreshold?: number;
+  /** Threshold percentage for context warning reminder (0.0–1.0, default 0.70). Triggers memory save reminder before hard limit. */
+  warningThreshold?: number;
   /** Pre-compaction memory flush (agentic turn). Default: enabled. */
   memoryFlush?: AgentCompactionMemoryFlushConfig;
 };
