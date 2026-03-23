@@ -479,7 +479,7 @@ async function sendSubagentAnnounceDirectly(params: {
           message: params.completionMessage,
           idempotencyKey: params.directIdempotencyKey,
         },
-        timeoutMs: 15_000,
+        timeoutMs: 60_000,
       });
 
       return {
@@ -506,7 +506,7 @@ async function sendSubagentAnnounceDirectly(params: {
         idempotencyKey: params.directIdempotencyKey,
       },
       expectFinal: true,
-      timeoutMs: 15_000,
+      timeoutMs: 60_000,
     });
 
     return {

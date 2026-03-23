@@ -1,10 +1,9 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ReasoningLevel, VerboseLevel } from "../../../auto-reply/thinking.js";
-import type { OpenClawConfig } from "../../../config/config.js";
-import type { ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import { parseReplyDirectives } from "../../../auto-reply/reply/reply-directives.js";
+import type { ReasoningLevel, VerboseLevel } from "../../../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
 import { formatToolAggregate } from "../../../auto-reply/tool-meta.js";
+import type { OpenClawConfig } from "../../../config/config.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
   formatAssistantErrorText,
@@ -13,6 +12,7 @@ import {
   isRawApiErrorPayload,
   normalizeTextForComparison,
 } from "../../pi-embedded-helpers.js";
+import type { ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import {
   extractAssistantText,
   extractAssistantThinking,
@@ -138,7 +138,12 @@ export function buildEmbeddedRunPayloads(params: {
 
   const inlineToolResults =
     params.inlineToolResultsAllowed && params.verboseLevel !== "off" && params.toolMetas.length > 0;
-  if (inlineToolResults) {
+
+  // Always extract media/directives from tool results for delivery, even when verboseLevel is "off".
+  // This ensures TTS audio, images, and other media are deliverable in cron jobs and isolated sessions.
+  const shouldExtractToolMedia = params.inlineToolResultsAllowed && params.toolMetas.length > 0;
+
+  if (shouldExtractToolMedia) {
     for (const { toolName, meta } of params.toolMetas) {
       const agg = formatToolAggregate(toolName, meta ? [meta] : [], {
         markdown: useMarkdown,
@@ -151,7 +156,13 @@ export function buildEmbeddedRunPayloads(params: {
         replyToTag,
         replyToCurrent,
       } = parseReplyDirectives(agg);
-      if (cleanedText) {
+
+      // When verbose is off, only include items with media or directives (skip text-only tool results)
+      const hasMedia = mediaUrls && mediaUrls.length > 0;
+      const hasDirectives = replyToId || replyToTag || replyToCurrent || audioAsVoice;
+      const shouldInclude = inlineToolResults || hasMedia || hasDirectives;
+
+      if (cleanedText && shouldInclude) {
         replyItems.push({
           text: cleanedText,
           media: mediaUrls,

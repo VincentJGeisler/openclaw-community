@@ -98,6 +98,18 @@ export type PreResponseMemoryHookConfig = HookConfig & {
   timeoutMs?: number;
   /** How to inject memories: prepend to message or add to system prompt */
   injectFormat?: "prepend" | "system";
+  /** Enable uncertainty detection based on memory retrieval */
+  uncertaintyDetection?: {
+    enabled?: boolean;
+    /** Threshold below which agent is "uncertain" (0-1, default: 0.4) */
+    uncertainThreshold?: number;
+    /** Threshold above which agent is "confident" (0-1, default: 0.7) */
+    confidentThreshold?: number;
+    /** Weight for memory count in uncertainty calculation (default: 0.4) */
+    memoryCountWeight?: number;
+    /** Weight for RDGNN activation in uncertainty calculation (default: 0.6) */
+    rdActivationWeight?: number;
+  };
 };
 
 export type HookInstallRecord = {

@@ -13,6 +13,8 @@ export type GraphRAGMemory = {
   memory_id: string;
   content: string;
   similarity: number;
+  rd_activation?: number;
+  rd_importance?: number;
   metadata?: Record<string, unknown>;
   timestamp?: string;
 };
@@ -24,6 +26,9 @@ export type GraphRAGQueryOptions = {
   similarityThreshold: number;
   maxResults: number;
   timeoutMs: number;
+  useRdWeighting?: boolean;
+  alpha?: number;
+  beta?: number;
 };
 
 export type GraphRAGQueryResult = {
@@ -55,14 +60,24 @@ export async function queryMemories(options: GraphRAGQueryOptions): Promise<Grap
     });
 
     const startTime = Date.now();
+
+    const payload: Record<string, unknown> = {
+      query: options.query,
+      limit: options.maxResults,
+      similarity_threshold: options.similarityThreshold,
+    };
+
+    // Add RD weighting parameters if requested
+    if (options.useRdWeighting) {
+      payload.use_rd_weighting = true;
+      payload.alpha = options.alpha ?? 0.7;
+      payload.beta = options.beta ?? 0.3;
+    }
+
     const response = await fetch(searchUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: options.query,
-        limit: options.maxResults,
-        similarity_threshold: options.similarityThreshold,
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
 

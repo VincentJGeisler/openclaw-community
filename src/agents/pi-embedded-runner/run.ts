@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { estimateTokens, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { AgentPreResponseHookContext } from "../../hooks/internal-hooks.js";
 import { triggerInternalHook } from "../../hooks/internal-hooks.js";
@@ -232,6 +233,7 @@ export async function runEmbeddedPiAgent(
       await triggerInternalHook(preResponseEvent);
 
       // Inject memories into prompt if retrieved
+      // NOTE: enrichedPrompt is used ONLY for the LLM API call, not persisted to session
       let enrichedPrompt = params.prompt;
       if (
         preResponseHookContext.additionalContext &&
@@ -242,9 +244,6 @@ export async function runEmbeddedPiAgent(
           `[pre-response-memory] Memories injected: count=${preResponseHookContext.additionalContext.length} originalLength=${params.prompt.length} enrichedLength=${enrichedPrompt.length}`,
         );
       }
-
-      // Use enriched prompt for the rest of the function
-      params = { ...params, prompt: enrichedPrompt };
 
       let provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
       let modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -516,13 +515,121 @@ export async function runEmbeddedPiAgent(
       const usageAccumulator = createUsageAccumulator();
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
+
+      // Hard-limit compaction mode: proactively check and compact before attempt
+      const compactionMode = params.config?.agents?.defaults?.compaction?.mode;
+      log.info(
+        `[DEBUG] Compaction mode check: mode="${compactionMode}", agentId="${params.agentId}"`,
+      );
+
+      if (compactionMode === "hard-limit") {
+        const compactionCfg = params.config?.agents?.defaults?.compaction;
+        const threshold = compactionCfg?.hardLimitThreshold ?? 0.85;
+
+        // Get context window info
+        const contextWindowInfo = resolveContextWindowInfo({
+          cfg: params.config,
+          provider,
+          modelId,
+          modelContextWindow: model.contextWindow,
+          defaultTokens: DEFAULT_CONTEXT_TOKENS,
+        });
+        const maxTokens = Math.floor(contextWindowInfo.tokens * threshold);
+        log.info(
+          `[DEBUG] Hard-limit: maxTokens=${maxTokens} (contextWindow=${contextWindowInfo.tokens}, threshold=${threshold})`,
+        );
+
+        // Load session and estimate current tokens
+        let currentTokens = 0;
+        try {
+          const sessionManager = SessionManager.open(params.sessionFile);
+          const sessionContext = sessionManager.buildSessionContext();
+          log.info(
+            `[DEBUG] Hard-limit: loaded session with ${sessionContext.messages.length} messages`,
+          );
+          for (const msg of sessionContext.messages) {
+            try {
+              currentTokens += estimateTokens(msg);
+            } catch {
+              // Skip messages that fail to estimate
+            }
+          }
+          log.info(`[DEBUG] Hard-limit: estimated ${currentTokens} tokens`);
+        } catch (err) {
+          log.warn(`Hard-limit: failed to load session for token check: ${String(err)}`);
+        }
+
+        // Check if we're over the threshold
+        if (currentTokens >= maxTokens) {
+          log.info(
+            `Hard-limit: token threshold reached (${currentTokens} >= ${maxTokens}, threshold=${threshold * 100}%), forcing compaction`,
+          );
+
+          const compactResult = await compactEmbeddedPiSessionDirect({
+            trigger: "manual",
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            messageChannel: params.messageChannel,
+            messageProvider: params.messageProvider,
+            agentAccountId: params.agentAccountId,
+            sessionFile: params.sessionFile,
+            workspaceDir: resolvedWorkspace,
+            agentDir,
+            provider,
+            model: modelId,
+            config: params.config,
+            skillsSnapshot: params.skillsSnapshot,
+            thinkLevel,
+            reasoningLevel: params.reasoningLevel,
+            runId: params.runId,
+          });
+
+          if (!compactResult.compacted) {
+            // Compaction failed, return error immediately
+            log.error(
+              `Hard-limit: compaction failed (${compactResult.reason ?? "unknown reason"}), blocking prompt`,
+            );
+            return {
+              payloads: [
+                {
+                  text: `Context limit reached (${currentTokens} tokens, limit ${maxTokens}). Automatic compaction failed: ${compactResult.reason ?? "unknown error"}. Send /compact manually or /reset to start fresh.`,
+                  isError: true,
+                },
+              ],
+              meta: {
+                durationMs: 0,
+                agentMeta: {
+                  sessionId: params.sessionId,
+                  provider,
+                  model: modelId,
+                },
+                error: {
+                  kind: "compaction_failure",
+                  message: compactResult.reason || "Hard-limit compaction failed",
+                },
+              },
+            };
+          }
+
+          const tokensBefore = compactResult.result?.tokensBefore ?? currentTokens;
+          const tokensAfter = compactResult.result?.tokensAfter ?? 0;
+          log.info(
+            `Hard-limit: compaction succeeded (${tokensBefore} → ${tokensAfter} tokens), proceeding with prompt`,
+          );
+        } else {
+          log.debug(
+            `Hard-limit: token check passed (${currentTokens} < ${maxTokens}, threshold=${threshold * 100}%)`,
+          );
+        }
+      }
+
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
           await fs.mkdir(resolvedWorkspace, { recursive: true });
 
           const prompt =
-            provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
+            provider === "anthropic" ? scrubAnthropicRefusalMagic(enrichedPrompt) : enrichedPrompt;
 
           const attempt = await runEmbeddedAttempt({
             sessionId: params.sessionId,
@@ -1040,7 +1147,7 @@ export async function runEmbeddedPiAgent(
             reasoningLevel: params.reasoningLevel,
             toolResultFormat: resolvedToolResultFormat,
             suppressToolErrorWarnings: params.suppressToolErrorWarnings,
-            inlineToolResultsAllowed: false,
+            inlineToolResultsAllowed: true,
           });
 
           // Timeout aborts can leave the run without any assistant payloads.

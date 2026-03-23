@@ -47,6 +47,13 @@ function copyHookMetadata() {
 
     fs.copyFileSync(srcHookMd, distHookMd);
     console.log(`[copy-hook-metadata] Copied ${hookName}/HOOK.md`);
+
+    // Copy any .yaml files (e.g., triggers.yaml)
+    const yamlFiles = fs.readdirSync(srcHookDir).filter((f) => f.endsWith(".yaml"));
+    for (const yamlFile of yamlFiles) {
+      fs.copyFileSync(path.join(srcHookDir, yamlFile), path.join(distHookDir, yamlFile));
+      console.log(`[copy-hook-metadata] Copied ${hookName}/${yamlFile}`);
+    }
   }
 
   console.log("[copy-hook-metadata] Done");
